@@ -1,3 +1,9 @@
+# 来源溯源:扒自 mack-a/v2ray-agent 的 install.sh(clashMeta 模板骨架),约 8914-9330 行。
+#   https://raw.githubusercontent.com/mack-a/v2ray-agent/master/install.sh
+#   扒取日期:2026-07-11。此后与上游脱钩,本文件即本项目自有副本(include_str! 编译期焊入二进制)。
+# 想同步 mack-a 的后续改进需手动重新扒取并 diff 对比;上游更新不会自动影响本项目。
+# 注意:下方 geox-url / rule-providers 里的 gh-proxy.com、jsdelivr 是【客户端运行期】的活依赖(非本服务),
+#   gh-proxy.com 是第三方镜像,存在单点风险,可按需换成更稳的源。
 log-level: debug
 mode: rule
 ipv6: true
