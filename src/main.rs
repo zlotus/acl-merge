@@ -101,12 +101,17 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/p", get(serve_profile))
         .route("/healthz", get(|| async { "ok" }))
-        .with_state(state);
+        .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("无法绑定监听地址 {listen}"))?;
-    tracing::info!("acl-merge v2 监听于 http://{listen}/p?token=***");
+    tracing::info!("acl-merge v2 启动");
+    tracing::info!("  监听地址: http://{listen}/p?token=***");
+    tracing::info!("  节点源(acl-url): {}", state.args.acl_url);
+    tracing::info!("  规则源(gist-url): {}", state.args.gist_url);
+    tracing::info!("  scrub 关键词: {:?}", state.scrub);
+    tracing::info!("  缓存: {}s", state.args.cache_secs);
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -125,6 +130,7 @@ async fn serve_profile(
         let cache = st.cache.lock().await;
         if let Some((t, body)) = cache.as_ref() {
             if t.elapsed() < Duration::from_secs(st.args.cache_secs) {
+                tracing::info!("命中缓存({}s 内),直接返回 {} 字节", t.elapsed().as_secs(), body.len());
                 return yaml_ok(body.clone());
             }
         }
@@ -159,6 +165,7 @@ async fn build_config(st: &AppState) -> Result<String> {
         .await
         .context("拉取 acl-url 失败")?;
     let mut proxies = extract_proxies(&acl_text).context("从上游解析 proxies 失败")?;
+    let proxies_upstream = proxies.len();
 
     // 1b. 净化:整个节点命中 scrub 关键词就整条丢弃(不能只删一行,那会做出缺 server 的残废节点)
     if !st.scrub.is_empty() {
@@ -173,6 +180,7 @@ async fn build_config(st: &AppState) -> Result<String> {
             }
         });
     }
+    let proxies_scrubbed = proxies_upstream - proxies.len();
 
     if proxies.is_empty() {
         return Err(anyhow!("上游订阅里没有解析到任何节点(proxies 为空,或全被 scrub 丢弃)"));
@@ -188,16 +196,19 @@ async fn build_config(st: &AppState) -> Result<String> {
     let mut root: Value = serde_yaml::from_str(BUILTIN_TEMPLATE).context("内置模板解析失败")?;
 
     // 4. 组装
+    let proxies_final = proxies.len();
     let proxy_names = collect_proxy_names(&proxies);
     remove_proxy_providers(&mut root);
     rewrite_groups_use_to_proxies(&mut root, &proxy_names);
     inject_proxies(&mut root, proxies);
-    apply_rule_patch(&mut root, &patch)?;
+    let stats = apply_rule_patch(&mut root, &patch)?;
 
     // 4b. 净化 rules:一条规则是一个字符串标量,整条丢弃是安全的(不像节点里删一行会做出残废节点)。
     //     典型来源:gist 里还留着 `DOMAIN,xxx.你的域名,DIRECT` 这种旧规则。
+    let mut rules_scrubbed = 0usize;
     if !st.scrub.is_empty() {
         if let Some(Value::Sequence(rules)) = root.get_mut("rules") {
+            let before = rules.len();
             rules.retain(|r| {
                 let s = r.as_str().unwrap_or("");
                 match st.scrub.iter().find(|kw| s.contains(kw.as_str())) {
@@ -208,8 +219,19 @@ async fn build_config(st: &AppState) -> Result<String> {
                     None => true,
                 }
             });
+            rules_scrubbed = before - rules.len();
         }
     }
+
+    let rules_final = root
+        .get("rules")
+        .and_then(|r| r.as_sequence())
+        .map_or(0, |s| s.len());
+    tracing::info!(
+        "构建完成: 节点 {proxies_final}/{proxies_upstream}(scrub 丢弃 {proxies_scrubbed}), \
+         规则 原始={} 最终={rules_final} (prepend={} append={} delete={} scrub={rules_scrubbed})",
+        stats.original, stats.prepend, stats.append, stats.deleted
+    );
 
     // 5. 序列化
     let out = serde_yaml::to_string(&root)?;
@@ -323,8 +345,17 @@ fn inject_proxies(root: &mut Value, proxies: Sequence) {
     }
 }
 
+/// 规则处理统计(用于日志)
+#[derive(Debug, Default)]
+struct RuleStats {
+    original: usize,
+    prepend: usize,
+    append: usize,
+    deleted: usize,
+}
+
 /// 应用 gist 规则补丁:prepend 到 rules 顶部、append 到尾部、delete 删除匹配项
-fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<()> {
+fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<RuleStats> {
     let Value::Mapping(map) = root else {
         return Err(anyhow!("模板根不是 mapping"));
     };
@@ -335,6 +366,8 @@ fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<()> {
         return Err(anyhow!("rules 不是 sequence"));
     };
 
+    let original = rules.len();
+
     // delete:删除任何等于 delete 项、或包含该子串的规则
     if !patch.delete.is_empty() {
         rules.retain(|r| {
@@ -342,6 +375,7 @@ fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<()> {
             !patch.delete.iter().any(|d| s == d || s.contains(d.as_str()))
         });
     }
+    let deleted = original - rules.len();
 
     // prepend:插到最前面(保持顺序)
     if !patch.prepend.is_empty() {
@@ -366,7 +400,12 @@ fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(RuleStats {
+        original,
+        prepend: patch.prepend.len(),
+        append: patch.append.len(),
+        deleted,
+    })
 }
 
 #[cfg(test)]
