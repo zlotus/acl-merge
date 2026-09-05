@@ -32,10 +32,10 @@ echo "==> [2/6] 现场生成本机密钥"
 UUID=$(./xray uuid)
 KEYS=$(./xray x25519)
 PRIV=$(echo "$KEYS" | awk '/PrivateKey/{print $2}')
-PUB=$(echo "$KEYS"  | grep -oP 'Password.*?:\s*\K\S+')
+PUB=$(echo "$KEYS" | grep -oP 'Password.*?:\s*\K\S+')
 SID=$(openssl rand -hex 8)
 IP=$(curl -s4 --max-time 8 ifconfig.me || hostname -I | awk '{print $1}')
-cat > "$XRAY_DIR/creds.env" <<EOF
+cat >"$XRAY_DIR/creds.env" <<EOF
 UUID=$UUID
 PRIVATE_KEY=$PRIV
 PUBLIC_KEY=$PUB
@@ -47,7 +47,7 @@ EOF
 chmod 600 "$XRAY_DIR/creds.env"
 
 echo "==> [3/6] 写服务端配置 (target=$DEST, port=$PORT)"
-cat > "$XRAY_DIR/config.json" <<EOF
+cat >"$XRAY_DIR/config.json" <<EOF
 {
   "log": { "loglevel": "warning" },
   "inbounds": [{
@@ -67,7 +67,7 @@ EOF
 ./xray run -test -c "$XRAY_DIR/config.json" >/dev/null
 
 echo "==> [4/6] 写 systemd unit 并启动"
-cat > /etc/systemd/system/$SERVICE.service <<EOF
+cat >/etc/systemd/system/$SERVICE.service <<EOF
 [Unit]
 Description=Xray VLESS-Reality (clean)
 After=network.target
@@ -81,11 +81,23 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now $SERVICE >/dev/null 2>&1
+systemctl restart $SERVICE
 sleep 2
-systemctl is-active --quiet $SERVICE || { echo "!! $SERVICE 未启动"; journalctl -u $SERVICE -n 20 --no-pager; exit 1; }
+
+systemctl is-active --quiet $SERVICE || {
+  echo "!! $SERVICE 未启动"
+  journalctl -u $SERVICE -n 20 --no-pager
+  exit 1
+}
+
+systemctl is-active --quiet $SERVICE || {
+  echo "!! $SERVICE 未启动"
+  journalctl -u $SERVICE -n 20 --no-pager
+  exit 1
+}
 
 echo "==> [5/6] 自检:loopback 实拨节点,确认 Reality 握手能走完 (这一步把'伪装站选错'挡在部署阶段)"
-cat > /tmp/rt-c.json <<EOF
+cat >/tmp/rt-c.json <<EOF
 { "log": {"loglevel": "warning"},
   "inbounds": [{"port": 10888, "listen": "127.0.0.1", "protocol": "socks"}],
   "outbounds": [{"protocol": "vless",
@@ -99,7 +111,8 @@ EOF
 RT_PID=$!
 sleep 2
 CODE=$(curl -s --max-time 15 -x socks5h://127.0.0.1:10888 -o /dev/null -w "%{http_code}" https://cp.cloudflare.com/generate_204 || echo 000)
-kill $RT_PID 2>/dev/null; rm -f /tmp/rt-c.json
+kill $RT_PID 2>/dev/null
+rm -f /tmp/rt-c.json
 if [ "$CODE" != "204" ]; then
   echo "!! 自检失败(HTTP $CODE)。伪装站 '$DEST' 可能证书链太大或不可达。"
   echo "!! 换一个再来:  DEST=www.bing.com curl -sL <脚本> | bash"
@@ -108,7 +121,7 @@ fi
 echo "    自检通过 (HTTP 204)"
 
 echo "==> [6/6] 生成客户端节点文件 $XRAY_DIR/nodes.yaml"
-cat > "$XRAY_DIR/nodes.yaml" <<EOF
+cat >"$XRAY_DIR/nodes.yaml" <<EOF
 proxies:
   - name: Reality-$(hostname)
     type: vless
@@ -136,8 +149,10 @@ if [ -n "${SECRET:-}" ]; then
   echo "==> [+] 部署 acl-merge 订阅服务 (systemd)"
   curl -sL --max-time 60 https://github.com/zlotus/acl-merge/releases/latest/download/acl-merge -o "$XRAY_DIR/acl-merge"
   chmod +x "$XRAY_DIR/acl-merge"
-  GIST_URL="${GIST_URL:-}"; SCRUB="${SCRUB:-}"; LISTEN="${LISTEN:-127.0.0.1:8080}"
-  cat > /etc/systemd/system/acl-merge.service <<EOF
+  GIST_URL="${GIST_URL:-}"
+  SCRUB="${SCRUB:-}"
+  LISTEN="${LISTEN:-127.0.0.1:8080}"
+  cat >/etc/systemd/system/acl-merge.service <<EOF
 [Unit]
 Description=acl-merge subscription server
 After=network.target $SERVICE.service
@@ -151,7 +166,10 @@ EOF
   systemctl daemon-reload
   systemctl enable --now acl-merge >/dev/null 2>&1
   sleep 2
-  systemctl is-active --quiet acl-merge && echo "    acl-merge 已启动 (监听 $LISTEN)" || { echo "!! acl-merge 未启动"; journalctl -u acl-merge -n 10 --no-pager; }
+  systemctl is-active --quiet acl-merge && echo "    acl-merge 已启动 (监听 $LISTEN)" || {
+    echo "!! acl-merge 未启动"
+    journalctl -u acl-merge -n 10 --no-pager
+  }
 fi
 
 cat <<EOF
