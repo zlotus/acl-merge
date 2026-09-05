@@ -56,6 +56,16 @@ dns:
     - '*.local'
     - 'dns.google'
     - "localhost.ptlogin2.qq.com"
+
+    # Tailscale
+    - "+.tailscale.com"
+    - "+.tailscale.io"
+
+    # Cloudflare Tunnel
+    - "+.argotunnel.com"
+    - "+.cfargotunnel.com"
+    - "+.cftunnel.com"
+
   use-hosts: true
   nameserver:
     - https://1.1.1.1/dns-query
