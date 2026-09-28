@@ -113,7 +113,7 @@ https://sub.example.com/p?token=<你的token>
 ```
 
 导入后应能看到节点、测延迟为绿、分流生效。首次导入 mihomo 会拉 geoip/geosite 数据库(模板里 jsdelivr 源),稍等即可。
-模板指定 `fake-ip` DNS 模式，但不内置 `fake-ip-filter`；具体过滤项由 Clash Verge 客户端本地 DNS 覆写维护。
+订阅不包含顶层 `dns:` 配置；DNS 完全由 Clash Verge Rev 客户端本地配置及 DNS 覆写维护。
 
 ---
 

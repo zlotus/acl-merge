@@ -462,12 +462,7 @@ proxies:
         assert!(!out.contains("${"), "残留模板占位符");
 
         let map = root.as_mapping().unwrap();
-        let dns = map["dns"].as_mapping().unwrap();
-        assert_eq!(dns["enhanced-mode"].as_str(), Some("fake-ip"));
-        assert!(
-            !dns.contains_key("fake-ip-filter"),
-            "fake-ip-filter 应由 Clash Verge 客户端本地 DNS 覆写负责"
-        );
+        assert!(!map.contains_key("dns"), "最终输出不应包含顶层 dns 配置");
         let group = |name: &str| -> Vec<String> {
             map["proxy-groups"]
                 .as_sequence()
