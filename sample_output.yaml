@@ -41,11 +41,6 @@ dns:
   ipv6: true
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
-  fake-ip-filter:
-  - '*.lan'
-  - '*.local'
-  - dns.google
-  - localhost.ptlogin2.qq.com
   use-hosts: true
   nameserver:
   - https://1.1.1.1/dns-query

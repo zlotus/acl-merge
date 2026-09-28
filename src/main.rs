@@ -1,4 +1,4 @@
-// acl-merge v2
+// acl-merge
 //
 // 从上游订阅(acl-url)只抽取节点(proxies),套用【内置的 vasma 原版模板】,
 // 注入 gist 规则补丁,把 provider 模式转成 inline proxies,输出无域名/无 phone-home 的干净 config。
@@ -24,7 +24,11 @@ use tokio::sync::Mutex;
 const BUILTIN_TEMPLATE: &str = include_str!("template.yaml");
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "acl-merge", version, about = "合并上游节点 + 内置模板 + gist 规则,输出干净的 clash 配置")]
+#[command(
+    name = "acl-merge",
+    version,
+    about = "合并上游节点 + 内置模板 + gist 规则,输出干净的 clash 配置"
+)]
 struct Args {
     /// 监听地址,例如 127.0.0.1:8080 (建议绑本地,配合 CF Tunnel / Tailscale)
     #[arg(long, default_value = "127.0.0.1:8080")]
@@ -106,7 +110,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("无法绑定监听地址 {listen}"))?;
-    tracing::info!("acl-merge v2 启动");
+    tracing::info!("acl-merge {} 启动", env!("CARGO_PKG_VERSION"));
     tracing::info!("  监听地址: http://{listen}/p?token=***");
     tracing::info!("  节点源(acl-url): {}", state.args.acl_url);
     tracing::info!("  规则源(gist-url): {}", state.args.gist_url);
@@ -130,7 +134,11 @@ async fn serve_profile(
         let cache = st.cache.lock().await;
         if let Some((t, body)) = cache.as_ref() {
             if t.elapsed() < Duration::from_secs(st.args.cache_secs) {
-                tracing::info!("命中缓存({}s 内),直接返回 {} 字节", t.elapsed().as_secs(), body.len());
+                tracing::info!(
+                    "命中缓存({}s 内),直接返回 {} 字节",
+                    t.elapsed().as_secs(),
+                    body.len()
+                );
                 return yaml_ok(body.clone());
             }
         }
@@ -183,7 +191,9 @@ async fn build_config(st: &AppState) -> Result<String> {
     let proxies_scrubbed = proxies_upstream - proxies.len();
 
     if proxies.is_empty() {
-        return Err(anyhow!("上游订阅里没有解析到任何节点(proxies 为空,或全被 scrub 丢弃)"));
+        return Err(anyhow!(
+            "上游订阅里没有解析到任何节点(proxies 为空,或全被 scrub 丢弃)"
+        ));
     }
 
     // 2. gist 规则补丁
@@ -230,7 +240,10 @@ async fn build_config(st: &AppState) -> Result<String> {
     tracing::info!(
         "构建完成: 节点 {proxies_final}/{proxies_upstream}(scrub 丢弃 {proxies_scrubbed}), \
          规则 原始={} 最终={rules_final} (prepend={} append={} delete={} scrub={rules_scrubbed})",
-        stats.original, stats.prepend, stats.append, stats.deleted
+        stats.original,
+        stats.prepend,
+        stats.append,
+        stats.deleted
     );
 
     // 5. 序列化
@@ -247,23 +260,23 @@ async fn build_config(st: &AppState) -> Result<String> {
 }
 
 fn proxy_name(p: &Value) -> Option<&str> {
-    p.as_mapping()?
-        .get(Value::String("name".into()))?
-        .as_str()
+    p.as_mapping()?.get(Value::String("name".into()))?.as_str()
 }
 
 async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {
     // 本地文件:非 http(s) 开头的当路径读(节点源可以是磁盘上的 nodes.yaml,不必再起 nginx)
     if !url.starts_with("http://") && !url.starts_with("https://") {
         let path = url.strip_prefix("file://").unwrap_or(url);
-        return std::fs::read_to_string(path)
-            .with_context(|| format!("读取本地文件失败: {path}"));
+        return std::fs::read_to_string(path).with_context(|| format!("读取本地文件失败: {path}"));
     }
     let resp = client.get(url).send().await?;
     let status = resp.status();
     let text = resp.text().await?;
     if !status.is_success() {
-        return Err(anyhow!("HTTP {status}: {}", text.chars().take(200).collect::<String>()));
+        return Err(anyhow!(
+            "HTTP {status}: {}",
+            text.chars().take(200).collect::<String>()
+        ));
     }
     Ok(text)
 }
@@ -338,10 +351,7 @@ fn rewrite_groups_use_to_proxies(root: &mut Value, proxy_names: &[String]) {
 
 fn inject_proxies(root: &mut Value, proxies: Sequence) {
     if let Value::Mapping(map) = root {
-        map.insert(
-            Value::String("proxies".into()),
-            Value::Sequence(proxies),
-        );
+        map.insert(Value::String("proxies".into()), Value::Sequence(proxies));
     }
 }
 
@@ -372,7 +382,10 @@ fn apply_rule_patch(root: &mut Value, patch: &RulePatch) -> Result<RuleStats> {
     if !patch.delete.is_empty() {
         rules.retain(|r| {
             let s = r.as_str().unwrap_or("");
-            !patch.delete.iter().any(|d| s == d || s.contains(d.as_str()))
+            !patch
+                .delete
+                .iter()
+                .any(|d| s == d || s.contains(d.as_str()))
         });
     }
     let deleted = original - rules.len();
@@ -449,6 +462,12 @@ proxies:
         assert!(!out.contains("${"), "残留模板占位符");
 
         let map = root.as_mapping().unwrap();
+        let dns = map["dns"].as_mapping().unwrap();
+        assert_eq!(dns["enhanced-mode"].as_str(), Some("fake-ip"));
+        assert!(
+            !dns.contains_key("fake-ip-filter"),
+            "fake-ip-filter 应由 Clash Verge 客户端本地 DNS 覆写负责"
+        );
         let group = |name: &str| -> Vec<String> {
             map["proxy-groups"]
                 .as_sequence()
@@ -467,11 +486,23 @@ proxies:
             assert!(!g.contains_key("use"), "group 还带 use: {:?}", g["name"]);
             let p = g["proxies"].as_sequence().unwrap();
             assert!(!p.is_empty(), "空 group: {:?}", g["name"]);
-            assert!(!p.iter().any(|v| v.is_null()), "group 里有 null 项: {:?}", g["name"]);
+            assert!(
+                !p.iter().any(|v| v.is_null()),
+                "group 里有 null 项: {:?}",
+                g["name"]
+            );
         }
         // select 组默认选中第一项:这两个组的默认值必须仍是 DIRECT,节点只能排在后面
-        assert_eq!(group("本地直连")[0], "DIRECT", "本地直连 默认值被节点顶掉了");
-        assert_eq!(group("国内媒体")[0], "DIRECT", "国内媒体 默认值被节点顶掉了");
+        assert_eq!(
+            group("本地直连")[0],
+            "DIRECT",
+            "本地直连 默认值被节点顶掉了"
+        );
+        assert_eq!(
+            group("国内媒体")[0],
+            "DIRECT",
+            "国内媒体 默认值被节点顶掉了"
+        );
         assert_eq!(group("手动切换"), vec!["好节点"], "手动切换 应该只有节点");
 
         let rules: Vec<&str> = map["rules"]
@@ -480,9 +511,18 @@ proxies:
             .iter()
             .map(|r| r.as_str().unwrap())
             .collect();
-        assert_eq!(rules[0], "DOMAIN-SUFFIX,claude.ai,ClaudeAI", "prepend 不在顶部");
-        let m = rules.iter().position(|r| r.starts_with("MATCH")).expect("模板没有 MATCH");
-        let a = rules.iter().position(|r| *r == "GEOIP,CN,DIRECT").expect("append 丢了");
+        assert_eq!(
+            rules[0], "DOMAIN-SUFFIX,claude.ai,ClaudeAI",
+            "prepend 不在顶部"
+        );
+        let m = rules
+            .iter()
+            .position(|r| r.starts_with("MATCH"))
+            .expect("模板没有 MATCH");
+        let a = rules
+            .iter()
+            .position(|r| *r == "GEOIP,CN,DIRECT")
+            .expect("append 丢了");
         assert!(a < m, "append 排在 MATCH 之后 = 死规则");
         assert_eq!(m, rules.len() - 1, "MATCH 必须是最后一条");
     }
